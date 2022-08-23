@@ -2,6 +2,9 @@ package com.processPension.services;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -9,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.processPension.customException.BusinessException;
+import com.processPension.customException.BusinessException2;
 import com.processPension.entities.Bankdetail;
 import com.processPension.entities.PensionDetail;
 import com.processPension.entities.PensionerDetail;
@@ -21,11 +25,18 @@ public class PensionDetailServiceImpl implements ProcessPensionService {
 	@Autowired
 	private PensionDetail pensionDetail;
 
+	@Value("${AUTHORIZATION_SERVICE_URI:http://localhost:8088}")
+	private String authorizationHost;
+
 	@Value("${PENSIONER_DETAIL_URI:http://localhost:9001}")
 	private String pensionerDetailHost;
 
 	@Override
-	public PensionDetail getPensionDetailByAadhar(Long aadhaar) {
+	public PensionDetail getPensionDetailByAadhar(Long aadhaar, String header) {
+
+		HttpHeaders headers = new HttpHeaders();
+		headers.add("Authorization", header);
+		HttpEntity<String> request = new HttpEntity<String>(headers);
 
 		/*
 		 * PensionerDetail pensionerDetail=
@@ -98,64 +109,98 @@ public class PensionDetailServiceImpl implements ProcessPensionService {
 		// .getForEntity("http://PENSIONER-DETAIL-SERVICE/pensionerDetail/" + aadhaar,
 		// String.class);
 
-		ResponseEntity<String> response = restTemplate.getForEntity(
-				pensionerDetailHost + "/api/pensioner-detail-service/pensionerDetail/" + aadhaar, String.class);
+		// ResponseEntity<String> authresponse = restTemplate
+		// .getForEntity(authorizationHost + "/api/authorization-service/validate",
+		// String.class);
 
-		String value = (String) response.getBody();
+		ResponseEntity<String> authresponse = restTemplate.exchange(
+				authorizationHost + "/api/authorization-service/validate", HttpMethod.GET, request, String.class);
 
-		if (value.equalsIgnoreCase("Invalid")) {
+		String isvalid = (String) authresponse.getBody();
 
-			throw new BusinessException("601", "Invalid Aadhaar");
-		} else {
+		if (isvalid.equalsIgnoreCase("Invalid")) {
 
-			ObjectMapper mapper = new ObjectMapper();
+			throw new BusinessException2(400, "Invalid jwt");
+		}
 
-			try {
-				PensionerDetail pensionerDetail = mapper.readValue(value, PensionerDetail.class);
+		else if (isvalid.equalsIgnoreCase("valid")) {
 
-				// PensionerDetail pensionerDetail = (PensionerDetail) response.getBody();
+			// HttpHeaders headers1 = new HttpHeaders();
+			// headers.add("Authorization", header);
+			// HttpEntity<String> request1 = new HttpEntity<String>(headers);
 
-				String type = pensionerDetail.getPensioner().getSelfOrFamily().trim();
+			// ResponseEntity<String> response = restTemplate.getForEntity(
+			// pensionerDetailHost + "/api/pensioner-detail-service/pensionerDetail/" +
+			// aadhaar, String.class);
 
-				double lastEarnedSalary = pensionerDetail.getPensioner().getSalaryEarned();
-				double allowances = pensionerDetail.getPensioner().getAllowances();
+			// ResponseEntity<String> response = restTemplate.exchange(
+			// pensionerDetailHost + "/api/pensioner-detail-service/pensionerDetail/" +
+			// aadhaar, request,
+			// String.class);
 
-				Bankdetail bankdetail = pensionerDetail.getBankdetail();
-				String bankType = bankdetail.getPublicOrprivate_bank().trim();
+			ResponseEntity<String> response = restTemplate.exchange(
+					pensionerDetailHost + "/api/pensioner-detail-service/pensionerDetail/" + aadhaar, HttpMethod.GET,
+					request, String.class);
 
-				if (type.equalsIgnoreCase("self")) {
+			String value = (String) response.getBody();
 
-					double pensionAmmount = (0.80 * lastEarnedSalary) + allowances;
+			if (value.equalsIgnoreCase("Invalid")) {
 
-					pensionDetail.setPensionAmount(pensionAmmount);
+				throw new BusinessException(601, "Invalid Aadhaar");
+			} else {
 
-				} else if (type.equalsIgnoreCase("family")) {
+				ObjectMapper mapper = new ObjectMapper();
 
-					double pensionAmmount = (0.50 * lastEarnedSalary) + allowances;
+				try {
+					PensionerDetail pensionerDetail = mapper.readValue(value, PensionerDetail.class);
 
-					pensionDetail.setPensionAmount(pensionAmmount);
+					// PensionerDetail pensionerDetail = (PensionerDetail) response.getBody();
 
+					String type = pensionerDetail.getPensioner().getSelfOrFamily().trim();
+
+					double lastEarnedSalary = pensionerDetail.getPensioner().getSalaryEarned();
+					double allowances = pensionerDetail.getPensioner().getAllowances();
+
+					Bankdetail bankdetail = pensionerDetail.getBankdetail();
+					String bankType = bankdetail.getPublicOrprivate_bank().trim();
+
+					if (type.equalsIgnoreCase("self")) {
+
+						double pensionAmmount = (0.80 * lastEarnedSalary) + allowances;
+
+						pensionDetail.setPensionAmount(pensionAmmount);
+
+					} else if (type.equalsIgnoreCase("family")) {
+
+						double pensionAmmount = (0.50 * lastEarnedSalary) + allowances;
+
+						pensionDetail.setPensionAmount(pensionAmmount);
+
+					}
+
+					if (bankType.equalsIgnoreCase("public")) {
+
+						pensionDetail.setBankServiceCharge(500.0);
+
+					}
+
+					else if (bankType.equalsIgnoreCase("private")) {
+
+						pensionDetail.setBankServiceCharge(550.0);
+
+					}
+
+				} catch (JsonProcessingException e) {
+
+					e.printStackTrace();
 				}
 
-				if (bankType.equalsIgnoreCase("public")) {
-
-					pensionDetail.setBankServiceCharge(500.0);
-
-				}
-
-				else if (bankType.equalsIgnoreCase("private")) {
-
-					pensionDetail.setBankServiceCharge(550.0);
-
-				}
-
-			} catch (JsonProcessingException e) {
-
-				e.printStackTrace();
 			}
 
-			return pensionDetail;
 		}
+
+		return pensionDetail;
+
 	}
 
 }
